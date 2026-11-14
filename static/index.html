@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cache &amp; Latency HUD</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="hud-shell">
+    <!-- Header -->
+    <header class="hud-header">
+      <div class="header-left">
+        <span class="brand-title">Cache &amp; Latency HUD</span>
+        <span id="liveBadge" class="badge badge-live">LIVE</span>
+        <span id="modeBadge" class="badge badge-mode">STANDARD USER</span>
+        <span id="ramBadge" class="badge badge-muted">RAM: -- MB</span>
+        <span id="savedBadge" class="badge badge-saved">Tiết kiệm: +0 tok</span>
+      </div>
+      <div class="header-actions">
+        <button id="btnExportJson" class="btn btn-secondary" type="button">Xuất JSON</button>
+        <button id="btnCopyHandoff" class="btn btn-secondary" type="button">Copy Handoff</button>
+        <button id="btnTestAlert" class="btn btn-secondary" type="button">Test Chuông</button>
+        <button id="btnToggleSound" class="btn btn-secondary" type="button">Chuông: Bật</button>
+      </div>
+    </header>
+
+    <!-- Dynamic Step Progress & Alert Banner -->
+    <section id="phaseBanner" class="phase-banner">
+      <div class="phase-banner-top">
+        <div class="phase-status-text">
+          <span id="phaseDot" class="status-dot"></span>
+          <strong id="phaseTitle">Đang chờ dữ liệu...</strong>
+          <span id="phaseSub" class="phase-sub"></span>
+        </div>
+        <div class="phase-timer-box">
+          <span id="phaseNetHint" class="net-hint"></span>
+          <span id="phaseTimer" class="phase-timer">0.0s</span>
+        </div>
+      </div>
+      <div class="pipeline-steps">
+        <div class="pipe-step" data-phase="TOOL_LOCAL">
+          <span class="pipe-idx">1</span>
+          <span class="pipe-label">Tool Local</span>
+          <span id="pipeToolTime" class="pipe-time">--</span>
+        </div>
+        <div class="pipe-arrow">&#8594;</div>
+        <div class="pipe-step" data-phase="UPLOAD_WAIT_TTFB">
+          <span class="pipe-idx">2</span>
+          <span class="pipe-label">Gửi &amp; ACK / TTFB</span>
+          <span id="pipeTtfbTime" class="pipe-time">--</span>
+        </div>
+        <div class="pipe-arrow">&#8594;</div>
+        <div class="pipe-step" data-phase="TPU_THINKING_STREAM">
+          <span class="pipe-idx">3</span>
+          <span class="pipe-label">TPU Thinking Stream</span>
+          <span id="pipeThinkTime" class="pipe-time">--</span>
+        </div>
+        <div class="pipe-arrow">&#8594;</div>
+        <div class="pipe-step" data-phase="DISPATCH_COMMIT">
+          <span class="pipe-idx">4</span>
+          <span class="pipe-label">Đầu ra &amp; Chốt sổ</span>
+          <span id="pipeOutInfo" class="pipe-time">--</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Environment & Session Selector -->
+    <section class="control-bar">
+      <div class="env-group">
+        <button id="btnEnvWin" class="env-pill active" type="button">Windows Host</button>
+        <button id="btnEnvWsl" class="env-pill" type="button">WSL2: <span id="wslDistroLabel">Ubuntu-22.04</span></button>
+        <span id="guardBadge" class="badge badge-standby">Guard: STANDBY</span>
+      </div>
+      <div class="session-group">
+        <button id="btnAutoFollow" class="btn btn-chip active" type="button" title="Tự bám theo phiên mới nhất đang chạy">Tự bám Tab</button>
+        <select id="sessionSelect" class="session-select"></select>
+        <button id="btnPinSession" class="btn btn-secondary" type="button">Ghim</button>
+        <button id="btnRenameSession" class="btn btn-secondary" type="button">Đổi tên</button>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="overview" type="button">Tổng quan</button>
+      <button class="tab-btn" data-tab="network" type="button">Độ trễ &amp; Monitor</button>
+      <button class="tab-btn" data-tab="steps" type="button">Từng bước</button>
+      <button class="tab-btn" data-tab="multisession" type="button">Đa phiên &amp; Cắt lỗ</button>
+    </nav>
+
+    <!-- TAB 1: OVERVIEW -->
+    <main id="tab-overview" class="tab-panel active">
+      <article class="card savings-card">
+        <div class="card-head">
+          <span class="card-title">Hiệu Quả Tiết Kiệm Token Khi Mở Tool</span>
+          <div class="chart-controls">
+            <span id="savingsSincePill" class="pill">Từ lúc mở: --:--:--</span>
+            <button id="btnResetSavings" class="btn btn-secondary" type="button">Đặt lại</button>
+          </div>
+        </div>
+        <div class="card-metric-row">
+          <div id="runSavedBig" class="savings-big text-green">+0</div>
+          <div class="meta-right">
+            <div>Lũy kế nhiều lần mở: <strong id="lifetimeSavedText" class="text-green">0</strong></div>
+            <div>Bước LLM khi đang mở HUD: <strong id="liveStepsSinceOpen">0 bước</strong></div>
+          </div>
+        </div>
+        <div class="card-foot">
+          <span class="text-green">Cache Read giữ ấm live: <strong id="savedLiveCache">0</strong></span>
+          <span class="text-cyan">Cứu qua Chuông TTL: <strong id="savedGuardRescue">0</strong></span>
+          <span class="text-yellow">Cắt lỗ Handoff: <strong id="savedHandoffCut">0</strong></span>
+        </div>
+      </article>
+
+      <div class="top-cards-grid">
+        <!-- Card 1: Cache Read vs Fresh Input -->
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">% Cache Read vs % Fresh Input</span>
+            <span id="modelPill" class="pill">--</span>
+          </div>
+          <div class="card-metric-row">
+            <div class="big-ratio">
+              <span id="cachePctBig" class="text-green">0.0%</span>
+              <span class="slash">/</span>
+              <span id="freshPctBig" class="text-red">0.0%</span>
+            </div>
+            <div class="meta-right">
+              <div>Bước cuối: <strong id="lastStepRatio">-- / --</strong></div>
+              <div>Số bước LLM: <strong id="llmStepsCount">0</strong></div>
+            </div>
+          </div>
+          <div class="progress-track">
+            <div id="cacheRatioBar" class="progress-fill-green" style="width: 0%"></div>
+          </div>
+          <div class="card-foot">
+            <span class="text-green">Cache: <strong id="totalCacheTok">0</strong></span>
+            <span class="text-muted">Output: <strong id="totalOutTok">0</strong></span>
+            <span class="text-red">Fresh: <strong id="totalFreshTok">0</strong></span>
+          </div>
+        </article>
+
+        <!-- Card 2: Cache TTL 5m -->
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Tuổi thọ Cache (TTL 5p)</span>
+            <span id="ttlTempBadge" class="pill pill-warm">Đang nguội</span>
+          </div>
+          <div class="card-metric-row">
+            <div id="ttlClock" class="big-clock text-yellow">00:00</div>
+            <div class="meta-right">
+              <div>Ngữ cảnh: <strong id="curContextTok">0</strong></div>
+              <div>Rớt Cache: <strong id="missCountText" class="text-yellow">0 lần</strong></div>
+            </div>
+          </div>
+          <div class="progress-track">
+            <div id="ttlBar" class="progress-fill-yellow" style="width: 0%"></div>
+          </div>
+          <div class="card-foot">
+            <span id="ttlFootNote" class="text-muted">Bộ nhớ đệm giữ tối đa 5 phút trên TPU HBM</span>
+            <span id="lastMissReasonBadge" class="text-yellow"></span>
+          </div>
+        </article>
+      </div>
+
+      <!-- Card 3: Latency Breakdown -->
+      <article class="card">
+        <div class="card-head">
+          <span class="card-title">Hồ sơ Độ trễ Agent (Latency Breakdown)</span>
+          <span id="tokPerSecBadge" class="pill">0.0 tok/s</span>
+        </div>
+        <div class="latency-grid">
+          <div class="stat-box">
+            <div class="stat-label">Bước cuối</div>
+            <div id="latLast" class="stat-val">0.0s</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Trung vị (P50)</div>
+            <div id="latP50" class="stat-val">0.0s</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Đỉnh P95</div>
+            <div id="latP95" class="stat-val">0.0s</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">TTFB TB</div>
+            <div id="latAvgTtfb" class="stat-val">0.0s</div>
+          </div>
+        </div>
+        <div class="breakdown-header">
+          <span>Phân rã bước gần nhất:</span>
+          <strong id="breakdownTotal">0.0s</strong>
+        </div>
+        <div class="stacked-bar">
+          <div id="segTtfb" class="seg-ttfb" style="width: 0%" title="TTFB / Prefill"></div>
+          <div id="segGen" class="seg-gen" style="width: 0%" title="Suy luận / Gen"></div>
+          <div id="segMon" class="seg-mon" style="width: 0%" title="Monitor"></div>
+          <div id="segTool" class="seg-tool" style="width: 0%" title="Tool Local"></div>
+        </div>
+        <div class="legend-row">
+          <span><i class="dot dot-ttfb"></i>TTFB/Prefill</span>
+          <span><i class="dot dot-gen"></i>Suy luận/Gen</span>
+          <span><i class="dot dot-mon"></i>Monitor</span>
+          <span><i class="dot dot-tool"></i>Tool Local</span>
+          <span id="hitVsMissCompare" class="compare-text">Khi Cache HIT: -- | Khi Cache MISS: --</span>
+        </div>
+      </article>
+
+      <!-- Card 4: Last 40 Steps Chart -->
+      <article class="card">
+        <div class="card-head">
+          <span class="card-title">40 bước gần nhất: % Cache Read vs % Fresh Input</span>
+          <div class="chart-controls">
+            <span id="chartWindowSpan" class="pill">--</span>
+            <button id="btnChartMode" class="btn btn-chip" type="button">Chế độ: Token</button>
+          </div>
+        </div>
+        <div class="chart-subhead">
+          <span id="chartTotalPrompt">Tổng 40 bước: 0</span>
+          <span>
+            <span class="text-green">Cache Read: <strong id="chartCacheSum">0</strong></span>
+            &nbsp;|&nbsp;
+            <span class="text-red">Fresh Input: <strong id="chartFreshSum">0</strong></span>
+            &nbsp;|&nbsp;
+            <span class="text-yellow">Cột vàng = Rớt Cache</span>
+          </span>
+        </div>
+        <div class="svg-chart-wrap">
+          <svg id="stepsChartSvg" viewBox="0 0 1000 210" preserveAspectRatio="none"></svg>
+          <div id="chartTooltip" class="chart-tooltip hidden"></div>
+        </div>
+        <div id="latestStepSummary" class="latest-step-footer">Chưa có bước nào được ghi nhận.</div>
+      </article>
+    </main>
+
+    <!-- TAB 2: NETWORK & GUARD TUNER -->
+    <main id="tab-network" class="tab-panel">
+      <div class="top-cards-grid">
+        <!-- Switch 1: TCP Keep-Alive -->
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Công tắc 1: Tối ưu Giữ Kết Nối Mạng OS (TCP Keep-Alive)</span>
+            <span id="kaStatusPill" class="pill">--</span>
+          </div>
+          <p class="card-desc">
+            Đọc trực tiếp từ Windows Registry (<code>HKLM\...\Tcpip\Parameters\KeepAliveTime</code>) và WSL2. Giảm ngưỡng thăm dò xuống <code>15s</code> giúp Modem Wi-Fi và WSL2 NAT không ngắt kết nối khi TPU đang suy nghĩ lâu (&gt;90s).
+          </p>
+          <div class="kv-list">
+            <div><span>Trạng thái Windows hiện tại:</span> <strong id="kaWinLabel">--</strong></div>
+            <div><span>Trạng thái WSL2:</span> <strong id="kaWslLabel">--</strong></div>
+            <div><span>Chẩn đoán đường truyền live:</span> <strong id="netDiagText">Bình thường</strong></div>
+          </div>
+          <div class="btn-row">
+            <button id="btnKaEnable" class="btn btn-primary" type="button">Bật Tối Ưu (15s)</button>
+            <button id="btnKaRestore" class="btn btn-secondary" type="button">Khôi Phục Mặc Định (2 giờ)</button>
+            <button id="btnKaRefresh" class="btn btn-secondary" type="button">Kiểm tra lại</button>
+          </div>
+          <div id="kaFeedback" class="feedback-box hidden"></div>
+        </article>
+
+        <!-- Switch 2: Auto-Guard Threshold -->
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Công tắc 2: Bảo vệ Quota Tự động theo Ngưỡng Token</span>
+            <span id="guardPanelPill" class="pill">--</span>
+          </div>
+          <p class="card-desc">
+            Chỉ bật chuông và Windows Toast ở các mốc TTL <code>90s / 30s / 0s</code> khi ngữ cảnh vượt ngưỡng để tránh làm phiền ở phiên nhỏ.
+          </p>
+          <div class="form-row">
+            <label>Chế độ Guard:
+              <select id="selGuardMode">
+                <option value="auto">Tự động theo ngưỡng token (Auto)</option>
+                <option value="on">Luôn bật (ON)</option>
+                <option value="off">Tắt (OFF)</option>
+              </select>
+            </label>
+            <label>Ngưỡng kích hoạt (tokens):
+              <input id="inpGuardTokens" type="number" min="1000" step="5000" value="50000" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="chk-label"><input id="chkSound" type="checkbox" checked /> Âm thanh Web Audio</label>
+            <label class="chk-label"><input id="chkToast" type="checkbox" checked /> Windows Toast Notification</label>
+          </div>
+          <div class="btn-row">
+            <button id="btnSaveGuard" class="btn btn-primary" type="button">Lưu Cấu Hình</button>
+            <button id="btnTestAlert2" class="btn btn-secondary" type="button">Test Chuông &amp; Thông Báo</button>
+          </div>
+        </article>
+      </div>
+
+      <!-- Realtime Net Chart -->
+      <article class="card">
+        <div class="card-head">
+          <span class="card-title">Lưu lượng Socket Real-time &amp; Độ trễ RTT</span>
+          <span id="netTelemetrySummary" class="pill">--</span>
+        </div>
+        <canvas id="netLiveCanvas" width="1000" height="160"></canvas>
+      </article>
+
+      <!-- Sockets & Local Processes -->
+      <div class="top-cards-grid">
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Kết nối TCP :443 của language_server.exe</span>
+            <span id="socketCountPill" class="pill">0 socket</span>
+          </div>
+          <div id="socketsTableWrap" class="table-wrap"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Tiến trình Tool Local đang hoạt động</span>
+            <span id="procPidPill" class="pill">PID: --</span>
+          </div>
+          <div id="procsListWrap" class="table-wrap"></div>
+        </article>
+      </div>
+    </main>
+
+    <!-- TAB 3: STEP INSPECTOR -->
+    <main id="tab-steps" class="tab-panel">
+      <article class="card">
+        <div class="card-head">
+          <span class="card-title">Chi tiết Từng Bước LLM</span>
+          <div class="filter-group">
+            <button class="btn btn-chip active" data-filter="all" type="button">Tất cả</button>
+            <button class="btn btn-chip" data-filter="miss" type="button">Chỉ Cây vàng</button>
+            <button class="btn btn-chip" data-filter="bloat" type="button">Bloat &gt;15k</button>
+            <button class="btn btn-chip" data-filter="slow" type="button">Chậm &gt;90s</button>
+          </div>
+        </div>
+        <div id="stepsTableWrap" class="table-wrap"></div>
+      </article>
+    </main>
+
+    <!-- TAB 4: MULTI-SESSION & HANDOFF -->
+    <main id="tab-multisession" class="tab-panel">
+      <div class="top-cards-grid">
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Tổng hợp Đa phiên &amp; Nguyên nhân Rớt Cache</span>
+          </div>
+          <div id="missReasonSummary" class="miss-summary-pills"></div>
+          <div id="multiSessionTableWrap" class="table-wrap"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <span class="card-title">Trình Tạo Smart Handoff Summary (Cắt lỗ khi TTL = 0)</span>
+            <button id="btnCopyHandoffBox" class="btn btn-primary" type="button">Copy Tóm tắt</button>
+          </div>
+          <textarea id="handoffTextarea" class="handoff-textarea" readonly></textarea>
+        </article>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

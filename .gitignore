@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+hud_settings.json
+*.tmp
+tests/_tmp*
+.DS_Store
+Thumbs.db
