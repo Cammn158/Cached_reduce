@@ -5,6 +5,7 @@ from pathlib import Path
 
 import aiohttp
 
+from kv_cache_hud.__main__ import is_hud_instance_alive
 from kv_cache_hud.config import default_antigravity_dir
 from kv_cache_hud.server import HudEngine, start_hud_server
 
@@ -37,6 +38,9 @@ class TestE2EServer(unittest.TestCase):
                         self.assertLess(state["process"]["self_ram_mb"], 80.0)
                         act = state["active_session"]
                         self.assertIsNotNone(act)
+
+                    self.assertTrue(await asyncio.to_thread(is_hud_instance_alive, "127.0.0.1", port))
+                    self.assertFalse(await asyncio.to_thread(is_hud_instance_alive, "127.0.0.1", 3399))
 
                     async with client.post(
                         f"{base}/api/settings",

@@ -6,5 +6,6 @@ venv/
 hud_settings.json
 *.tmp
 tests/_tmp*
+*.lnk
 .DS_Store
 Thumbs.db
